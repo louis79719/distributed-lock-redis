@@ -59,7 +59,7 @@ app.post('/account/:id', async (req, res, next) => {
     }
   });
 
-app.post('/transaction', async (req, res, next) => {
+app.post('/v1/transaction', async (req, res, next) => {
   try {
     const payload = req.body
     const { to, amount } = payload
@@ -83,6 +83,33 @@ app.post('/transaction', async (req, res, next) => {
       UpdateExpression: 'set balance = :newBalance',
       ExpressionAttributeValues: {
         ':newBalance': Item.balance + amountValue,
+      },
+      ReturnValues: 'UPDATED_NEW',
+    }).promise()
+    res.send(JSON.stringify(Attributes))
+  } catch (err) {
+    next(err)
+  }
+});
+
+app.post('/v2/transaction', async (req, res, next) => {
+  try {
+    const payload = req.body
+    const { to, amount } = payload
+    const amountValue = Number(amount)
+
+    if (Number.isNaN(amountValue)) {
+      return res.status(400).send('Invalid format')
+    }
+
+    const { Attributes } = await dynamo.update({
+      TableName: 'accounts',
+      Key: {
+          id: to,
+      },
+      UpdateExpression: 'set balance = balance + :amount',
+      ExpressionAttributeValues: {
+        ':amount': amountValue,
       },
       ReturnValues: 'UPDATED_NEW',
     }).promise()
