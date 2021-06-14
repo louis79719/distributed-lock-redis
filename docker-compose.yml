@@ -1,0 +1,17 @@
+version: "3.8"
+
+services:
+  redis-1:
+    image: redis
+    ports:
+      - "10001:6379"
+  redis-2:
+    image: redis
+    ports:
+      - "10002:6379"
+  redis-3:
+    image: redis
+    ports:
+      - "10003:6379"
+
+  
