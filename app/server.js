@@ -2,6 +2,8 @@ const AWS = require('aws-sdk')
 const express = require('express')
 const helmet = require('helmet')
 const bodyParser = require('body-parser')
+const Redis = require('ioredis')
+const Redlock = require('redlock')
 
 const awsRegion = process.env.AWS_REGION || 'eu-central-1'
 const dynamo = new AWS.DynamoDB.DocumentClient({
@@ -86,6 +88,7 @@ app.post('/v1/transaction', async (req, res, next) => {
       },
       ReturnValues: 'UPDATED_NEW',
     }).promise()
+
     res.send(JSON.stringify(Attributes))
   } catch (err) {
     next(err)
@@ -113,6 +116,83 @@ app.post('/v2/transaction', async (req, res, next) => {
       },
       ReturnValues: 'UPDATED_NEW',
     }).promise()
+
+    res.send(JSON.stringify(Attributes))
+  } catch (err) {
+    next(err)
+  }
+});
+
+// version 3: distributed lock
+async function tryLock(redlock, key, ttl) {
+  try {
+    const lock = await redlock.lock(key, ttl)
+    return lock
+  } catch (err) {
+    console.error(err)
+    return tryLock(redlock, key, ttl)
+  }
+}
+
+app.post('/v3/transaction', async (req, res, next) => {
+  try {
+    const payload = req.body
+    const { to, amount } = payload
+    const amountValue = Number(amount)
+
+    if (Number.isNaN(amountValue)) {
+      return res.status(400).send('Invalid format')
+    }
+
+    // lock distributed lock
+    const redisClients = [
+      new Redis(10001, 'localhost'),
+      new Redis(10002, 'localhost'),
+      new Redis(10003, 'localhost'),
+    ];
+    const redlock = new Redlock(
+      redisClients,
+      {
+        // the expected clock drift; for more details
+        // see http://redis.io/topics/distlock
+        driftFactor: 0.01, // multiplied by lock ttl to determine drift time
+    
+        // the max number of times Redlock will attempt
+        // to lock a resource before erroring
+        retryCount:  10,
+    
+        // the time in ms between attempts
+        retryDelay:  200, // time in ms
+    
+        // the max time in ms randomly added to retries
+        // to improve performance under high contention
+        // see https://www.awsarchitectureblog.com/2015/03/backoff.html
+        retryJitter:  200 // time in ms
+      }
+    );
+    const lock = await tryLock(redlock, `${to}:transaction`, 1000)
+
+    const { Item } = await dynamo.get({
+      TableName: 'accounts',
+      Key: {
+        id: to,
+      },
+    }).promise();
+    const { Attributes } = await dynamo.update({
+      TableName: 'accounts',
+      Key: {
+        id: to,
+      },
+      UpdateExpression: 'set balance = :newBalance',
+      ExpressionAttributeValues: {
+        ':newBalance': Item.balance + amountValue,
+      },
+      ReturnValues: 'UPDATED_NEW',
+    }).promise()
+
+    // release distributed lock
+    await lock.unlock()
+
     res.send(JSON.stringify(Attributes))
   } catch (err) {
     next(err)

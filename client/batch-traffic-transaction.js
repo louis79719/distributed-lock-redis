@@ -7,12 +7,11 @@ console.log(numberOfTransactions)
 async function thread() {
   const httpClient = axios.create({
     baseURL: 'http://localhost:8080',
-    timeout: 1000,
   })
 
   numberOfTransactions--
   if(numberOfTransactions >= 0) {
-    await httpClient.post('v2/transaction', {
+    await httpClient.post('v3/transaction', {
       to: "001",
       amount: 1,
     })
